@@ -1,6 +1,6 @@
 
 # =================================================================
-# 主函数：标准 DPM-BART 基线模型 (r = 1 固定)
+# Main Function: Standard DPM-BART Baseline Model (r = 1 fixed)
 # =================================================================
 bart_mixnormal_dp <- function(
     y,
@@ -29,11 +29,11 @@ bart_mixnormal_dp <- function(
   n <- length(y)
   p <- ncol(x)
   
-  cat("开始标准 DPM-BART (r=1) 抽样...\n")
-  cat("已启用 Escobar & West (1995) 数据增强法更新 alpha\n")
-  cat("期望簇内方差占比 (fraction):", fraction * 100, "%\n\n")
+  cat("Starting standard DPM-BART (r = 1) sampling...\n")
+  cat("Using Escobar & West (1995) data augmentation for alpha update\n")
+  cat("Expected within-cluster variance proportion (fraction):", fraction * 100, "%\n\n")
   
-  # --- 存储空间 ---
+  # --- Storage containers ---
   tree_store      <- vector('list', npost)
   y_hat_store     <- matrix(NA, ncol = n, nrow = npost)
   bart_store      <- matrix(NA, ncol = n, nrow = npost)
@@ -50,6 +50,7 @@ bart_mixnormal_dp <- function(
   
   tree_fits_cache <- matrix(0, ncol = ntrees, nrow = n)
   
+  # --- Standardize response ---
   y_mean <- mean(y)
   y_sd   <- sd(y)
   if (y_sd < 1e-8) y_sd <- 1e-6
@@ -59,12 +60,12 @@ bart_mixnormal_dp <- function(
   b_std    <- fraction * 1.0 * (a - 1) 
   s <- rep(1 / p, p)
   
-  # --- 初始化 ---
+  # --- Initialization ---
   alpha_current <- 1 / init_K         
   z             <- sample(1:init_K, size = n, replace = TRUE)  
   K             <- init_K                                      
   
-  # 【修改 1】：初始化辅助变量 tau
+  # Initialize auxiliary variable tau (Escobar & West scheme)
   tau_current   <- rbeta(1, shape1 = alpha_current + 1, shape2 = n) 
   
   residual_init           <- rep(0, n)  
@@ -87,11 +88,11 @@ bart_mixnormal_dp <- function(
   
   pb <- utils::txtProgressBar(min = 1, max = total_iterations, style = 3, width = 60, title = 'Running DPM-BART...')
   
-  # --- 主循环 ---
+  # --- Main MCMC loop ---
   for (i in seq_len(total_iterations)) {
     utils::setTxtProgressBar(pb, i)
     
-    # 1. BART Tree 更新
+    # 1. BART tree updates
     for (j in seq_len(ntrees)) {
       current_partial_residuals <- y_scale - yhat_bart + tree_fits_cache[, j]
       move_type <- sample_move(curr_trees[[j]], i, nburn)
@@ -125,12 +126,13 @@ bart_mixnormal_dp <- function(
     y_hat <- yhat_bart
     current_residuals <- y_scale - y_hat  
     
-    # 2. DP 更新 (强制 r = 1.0)
+    # 2. Dirichlet Process update (r fixed at 1.0)
     z_update_res <- update_z_inf_pCRP(x = current_residuals, K = K, z = z, alpha_current = alpha_current, 
                                       nu = nu, a = a, b = b_std, mu_0 = mu_0_std, r = 1.0)
     z <- z_update_res$z_update
     K <- z_update_res$final_K
     
+    # Remove empty clusters
     z_counts <- table(z)
     non_empty_labels <- as.integer(names(z_counts))
     if (length(non_empty_labels) < K) {
@@ -138,15 +140,16 @@ bart_mixnormal_dp <- function(
       K <- length(non_empty_labels)
     }
     
+    # Update cluster-specific parameters
     sigmamu_res <- update_sigmamu(x = current_residuals, z = z, Mu = Mu, Sigma2 = Sigma2, 
                                   mu_0 = mu_0_std, nu = nu, a = a, b = b_std, K = K)
     Mu     <- sigmamu_res$Mu
     Sigma2 <- sigmamu_res$Sigma2
     
-    # 【更新处】：改为直接基于经验比例计算 Pi (去除了 alpha_current 参数)
+    # Compute mixture weights via empirical proportions
     Pi     <- update_Pi_inf(z = z, K = K)
     
-    # 【修改 2】：使用经典的 Escobar & West (1995) 方法更新 alpha
+    # Update alpha using Escobar & West (1995)
     alphatau_res <- update_alphagibbs(
       K       = K,
       a_alpha = a_alpha,
@@ -158,12 +161,12 @@ bart_mixnormal_dp <- function(
     alpha_current <- alphatau_res$alpha_new
     tau_current   <- alphatau_res$tau_new
     
-    # 3. 变量选择
+    # 3. Variable selection (optional sparsity)
     if (isTRUE(sparse) && i > floor(total_iterations * 0.1)) {
       s <- update_s(var_count, p, 1)
     }
     
-    # 4. 后验收集
+    # 4. Posterior storage
     if ((i > nburn) && ((i - nburn) %% nthin == 0)) {
       idx <- (i - nburn) / nthin
       
@@ -184,7 +187,7 @@ bart_mixnormal_dp <- function(
   
   close(pb) 
   
-  cat("\n标准 DPM-BART 抽样完成！\n")
+  cat("\nStandard DPM-BART sampling completed!\n")
   
   results <- list(
     trees            = tree_store,
@@ -212,8 +215,6 @@ bart_mixnormal_dp <- function(
   class(results) <- "bart_mixnormal_dp"
   return(results)
 }
-
-
 
 
 
