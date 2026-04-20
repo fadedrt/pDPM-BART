@@ -453,21 +453,7 @@ sample_r_mh <- function(r_current, z, alpha, r_prior_sigma, mh_proposal_sd) {
   return(r_current)
 }
 
-update_Pi_inf <- function(z, K) {
-  # 1. 统计每个族群的数量（确保标签在1~K范围内）
-  counts <- tabulate(z, nbins = K)
-  
-  # 验证计数长度是否为K（避免z中标签超出1~K导致的错误）
-  if (length(counts) != K) {
-    stop("z中的标签必须是1到", K, "之间的整数！")
-  }
-  
-  # 2. 直接计算经验比例
-  # 因为此时的 K 已经过滤掉了空簇，所以 sum(counts) 等于总样本数 n
-  Pi_sample <- counts / sum(counts)
-  
-  return(Pi_sample)
-}
+
 
 
 
@@ -529,5 +515,24 @@ update_sigmamu <- function(x, z, Mu, Sigma2, mu_0, nu, a, b, K) {
   
   return(list(Mu = Mu_sample, Sigma2 = Sigma2_sample))
 }
+update_Pi_inf <- function(z, K) {
+  # 1. 统计每个族群的数量（确保标签在1~K范围内）
+  counts <- tabulate(z, nbins = K)
+  
+  # 验证计数长度是否为K（避免z中标签超出1~K导致的错误）
+  if (length(counts) != K) {
+    stop("z中的标签必须是1到", K, "之间的整数！")
+  }
+  
+  # 2. 直接计算经验比例
+  # 因为此时的 K 已经过滤掉了空簇，所以 sum(counts) 等于总样本数 n
+  Pi_sample <- counts / sum(counts)
+  
+  return(Pi_sample)
+}
+
+
+
+
 
 
