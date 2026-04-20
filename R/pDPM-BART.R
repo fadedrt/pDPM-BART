@@ -36,7 +36,6 @@ pdpmbart <- function(
     alpha_tree       = 0.95,
     beta_tree        = 2,
     init_K           = 3, 
-    fraction         = 0.292,  
     a                = 3,    
     nu               = 0.1,  
     a_alpha          = 1,    
@@ -57,9 +56,10 @@ pdpmbart <- function(
   n <- length(y)
   p <- ncol(x)
   
-  cat("Starting BART infinite mixture sampling (Data Augmentation + local swap)...\n")
+  cat("Starting pDPM-BART infinite mixture sampling (Data Augmentation + local swap)...\n")
   cat("Initial r:", r, ", proposal sd:", mh_proposal_sd, "\n")
   
+  # --- Storage containers ---
   tree_store      <- vector('list', npost)
   y_hat_store     <- matrix(NA, ncol = n, nrow = npost)
   bart_store      <- matrix(NA, ncol = n, nrow = npost)
@@ -77,21 +77,35 @@ pdpmbart <- function(
   
   tree_fits_cache <- matrix(0, ncol = ntrees, nrow = n)
   
+  # --- Standardize response ---
   y_mean <- mean(y)
   y_sd   <- sd(y)
   if (y_sd < 1e-8) y_sd <- 1e-6
   y_scale <- (y - y_mean) / y_sd
   
+  # =====================================================================
+  # Data-Driven Prior Calibration (strictly following manuscript description)
+  # Obtain the residual standard deviation hat(sigma) from an OLS regression 
+  # of y on x and calibrate b such that P(sigma_k < hat(sigma)) = 0.90
+  # =====================================================================
+  lm_fit    <- lm(y_scale ~ as.matrix(x))
+  sigma_hat <- sd(lm_fit$residuals)
+  
+  # Calibrate the rate parameter b_std based on the specified shape parameter 'a'
+  q_01      <- qchisq(0.1, df = 2 * a)
+  b_std     <- (q_01 * sigma_hat^2) / 2
+  # =====================================================================
+  
   mu_0_std <- 0  
-  b_std    <- fraction * 1.0 * (a - 1) 
   s <- rep(1 / p, p)
   
+  # --- Initialization ---
   alpha_current <- 1 / init_K         
   z             <- sample(1:init_K, size = n, replace = TRUE)  
   K             <- init_K                                      
   r_current     <- r
   
-  # Initialize latent permutation (not explicitly used in R layer)
+  # Initialize latent permutation (not explicitly used in the R layer pseudo-likelihood)
   current_pi    <- sample(1:n)
   
   residual_init           <- rep(0, n)  
@@ -112,12 +126,13 @@ pdpmbart <- function(
   new_trees  <- curr_trees
   yhat_bart  <- get_predictions(curr_trees, x, single_tree = (ntrees == 1))
   
-  pb <- utils::txtProgressBar(min = 1, max = total_iterations, style = 3, width = 60, title = 'Running...')
+  pb <- utils::txtProgressBar(min = 1, max = total_iterations, style = 3, width = 60, title = 'Running pDPM-BART...')
   
+  # --- Main MCMC loop ---
   for (i in seq_len(total_iterations)) {
     utils::setTxtProgressBar(pb, i)
     
-    # 5.1 BART tree update
+    # 5.1 BART tree ensemble updates
     for (j in seq_len(ntrees)) {
       current_partial_residuals <- y_scale - yhat_bart + tree_fits_cache[, j]
       move_type <- sample_move(curr_trees[[j]], i, nburn)
@@ -146,12 +161,11 @@ pdpmbart <- function(
       yhat_bart   <- yhat_bart - tree_fits_cache[, j] + current_fit
       tree_fits_cache[, j] <- current_fit
     }
-    y_hat <- yhat_bart
     
-    # 5.2 Infinite mixture update
+    y_hat <- yhat_bart
     current_residuals <- y_scale - y_hat  
     
-    # Update cluster assignments via C++ implementation
+    # 5.2 Infinite mixture updates via pCRP
     z_update_res <- update_z_inf_pCRP(
       x = current_residuals, K = K, z = z, alpha_current = alpha_current, 
       nu = nu, a = a, b = b_std, mu_0 = mu_0_std, r = r_current
@@ -159,22 +173,26 @@ pdpmbart <- function(
     z <- z_update_res$z_update
     K <- z_update_res$final_K
     
-    z_counts <- table(z)
-    non_empty_labels <- as.integer(names(z_counts))
-    if (length(non_empty_labels) < K) {
-      z <- match(z, non_empty_labels)
-      K <- length(non_empty_labels)
+    # Speed optimization: Use C-level tabulate to clean up empty clusters instantly
+    counts <- tabulate(z)
+    non_empty <- which(counts > 0)
+    if (length(non_empty) < K) {
+      mapping <- integer(max(z))
+      mapping[non_empty] <- seq_along(non_empty)
+      z <- mapping[z]
+      K <- length(non_empty)
     }
     
+    # Update cluster-specific parameters (Mu and Sigma2)
     sigmamu_res <- update_sigmamu(x = current_residuals, z = z, Mu = Mu, Sigma2 = Sigma2, 
                                   mu_0 = mu_0_std, nu = nu, a = a, b = b_std, K = K)
     Mu     <- sigmamu_res$Mu
     Sigma2 <- sigmamu_res$Sigma2
     
-    # Update mixture weights using empirical proportions
+    # Update mixture weights using empirical proportions (Dirichlet prior removed for speed)
     Pi <- update_Pi_inf(z = z, K = K)
     
-    # MH update for alpha
+    # MH step for the concentration parameter alpha
     alpha_current <- sample_alpha_mh(
       alpha_current  = alpha_current, 
       z              = z, 
@@ -184,7 +202,7 @@ pdpmbart <- function(
       mh_proposal_sd = 0.5
     )
     
-    # MH update for r
+    # MH step for the power parameter r
     r_current <- sample_r_mh(
       r_current      = r_current, 
       z              = z, 
