@@ -6,18 +6,6 @@ The Bayesian tree structure and framework in this code are adapted from the prim
 
 Optimization Note: To enhance computational efficiency, we have specifically accelerated three primary bottleneck functions by re-implementing them with optimized C++ backends. The corresponding source code for these accelerated functions can be found in R/pdpmbart_backend.R.
 
-### Note on Cluster Weights \( \pi_k \)
-
-In the main manuscript, the model is formulated through the partition structure induced by the power Chinese Restaurant Process (pCRP), and explicit cluster weights \( \pi_k \) are not introduced.
-
-However, for computing predictive criteria such as **LPML** and **WAIC**, a mixture density representation is required. For this purpose, we construct cluster weights at each MCMC iteration using the empirical proportions:
-
-\[
-\pi_k = \frac{n_k}{\sum_{j=1}^K n_j}
-\]
-
-where \( n_k \) is the number of observations assigned to cluster \( k \).
-
 These weights are **not model parameters** and are **not used during posterior sampling**. They are computed only for evaluating predictive performance and are stored in `Pi_store` for convenience.
 ## Example
 
