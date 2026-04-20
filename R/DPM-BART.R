@@ -1,7 +1,4 @@
 
-# =================================================================
-# Main Function: Standard DPM-BART Baseline Model (r = 1 fixed)
-# =================================================================
 dpmbart <- function(
     y,
     x,
@@ -11,7 +8,6 @@ dpmbart <- function(
     alpha_tree       = 0.95,
     beta_tree        = 2,
     init_K           = 3, 
-    fraction         = 0.3,  
     a                = 3,    
     nu               = 0.1,  
     a_alpha          = 1,    
@@ -31,7 +27,7 @@ dpmbart <- function(
   
   cat("Starting standard DPM-BART (r = 1) sampling...\n")
   cat("Using Escobar & West (1995) data augmentation for alpha update\n")
-  cat("Expected within-cluster variance proportion (fraction):", fraction * 100, "%\n\n")
+  cat("Prior calibrated via OLS residual variance to match P(sigma < sigma_hat) = 0.90\n\n")
   
   # --- Storage containers ---
   tree_store      <- vector('list', npost)
@@ -56,8 +52,16 @@ dpmbart <- function(
   if (y_sd < 1e-8) y_sd <- 1e-6
   y_scale <- (y - y_mean) / y_sd
   
+  # =====================================================================
+  # Data-Driven Prior Calibration
+  # =====================================================================
+  lm_fit    <- lm(y_scale ~ as.matrix(x))
+  sigma_hat <- sd(lm_fit$residuals)
+  q_01      <- qchisq(0.1, df = 2 * a)
+  b_std     <- (q_01 * sigma_hat^2) / 2
+  # =====================================================================
+  
   mu_0_std <- 0  
-  b_std    <- fraction * 1.0 * (a - 1) 
   s <- rep(1 / p, p)
   
   # --- Initialization ---
@@ -126,18 +130,20 @@ dpmbart <- function(
     y_hat <- yhat_bart
     current_residuals <- y_scale - y_hat  
     
-    # 2. Dirichlet Process update (r fixed at 1.0)
+    # 2. Dirichlet Process update (r explicitly fixed at 1.0)
     z_update_res <- update_z_inf_pCRP(x = current_residuals, K = K, z = z, alpha_current = alpha_current, 
                                       nu = nu, a = a, b = b_std, mu_0 = mu_0_std, r = 1.0)
     z <- z_update_res$z_update
     K <- z_update_res$final_K
     
-    # Remove empty clusters
-    z_counts <- table(z)
-    non_empty_labels <- as.integer(names(z_counts))
-    if (length(non_empty_labels) < K) {
-      z <- match(z, non_empty_labels)
-      K <- length(non_empty_labels)
+    # Speed optimization: Use C-level tabulate to clean up empty clusters instantly
+    counts <- tabulate(z)
+    non_empty <- which(counts > 0)
+    if (length(non_empty) < K) {
+      mapping <- integer(max(z))
+      mapping[non_empty] <- seq_along(non_empty)
+      z <- mapping[z]
+      K <- length(non_empty)
     }
     
     # Update cluster-specific parameters
@@ -149,7 +155,7 @@ dpmbart <- function(
     # Compute mixture weights via empirical proportions
     Pi     <- update_Pi_inf(z = z, K = K)
     
-    # Update alpha using Escobar & West (1995)
+    # Update alpha using Escobar & West (1995) method
     alphatau_res <- update_alphagibbs(
       K       = K,
       a_alpha = a_alpha,
@@ -215,6 +221,4 @@ dpmbart <- function(
   class(results) <- "bart_mixnormal_dp"
   return(results)
 }
-
-
 
