@@ -1,4 +1,3 @@
-
 bart_mixnormal_infinite_power_rr <- function(
     y,
     x,
@@ -28,9 +27,6 @@ bart_mixnormal_infinite_power_rr <- function(
   total_iterations <- nburn + npost * nthin
   n <- length(y)
   p <- ncol(x)
-  
-  #r_prior_mean         <- (r_prior_shape / r_prior_rate) + 1
-  #r_prior_mean_minus_1 <- r_prior_shape / r_prior_rate
   
   cat("开始BART-无限混合模型抽样（Data Augmentation 潜排列严谨版 + Local Swap）...\n")
   cat("r初始值：", r, "，提议标准差：", mh_proposal_sd, "\n")
@@ -145,10 +141,11 @@ bart_mixnormal_infinite_power_rr <- function(
                                   mu_0 = mu_0_std, nu = nu, a = a, b = b_std, K = K)
     Mu     <- sigmamu_res$Mu
     Sigma2 <- sigmamu_res$Sigma2
-    Pi <- update_Pi_inf(z = z, alpha = alpha_current, K = K)
+    
+    # 【更新处】：改为直接基于经验比例计算 Pi
+    Pi <- update_Pi_inf(z = z, K = K)
     
     # 【核心逻辑闭环：纯伪似然框架】
-    # 彻底移除了 current_pi 的打乱和维护，因为在伪似然下模型具备可交换性
     alpha_current <- sample_alpha_mh(
       alpha_current  = alpha_current, 
       z              = z, 
@@ -158,15 +155,6 @@ bart_mixnormal_infinite_power_rr <- function(
       mh_proposal_sd = 0.5
     )
     
-    #r_current <- sample_r_mh(
-    # r_current      = r_current, 
-    # z              = z, 
-    #  alpha          = alpha_current, 
-    # r_prior_shape  = r_prior_shape, 
-    # r_prior_rate   = r_prior_rate, 
-    # mh_proposal_sd = mh_proposal_sd
-    # )
-    
     r_current <- sample_r_mh(
       r_current      = r_current, 
       z              = z, 
@@ -174,7 +162,6 @@ bart_mixnormal_infinite_power_rr <- function(
       r_prior_sigma  = r_prior_sigma, # <--- 改为传入 sigma
       mh_proposal_sd = mh_proposal_sd
     )
-    
     
     # 5.3 Dirichlet Sparsity Update
     if (isTRUE(sparse) && i > floor(total_iterations * 0.1)) {
