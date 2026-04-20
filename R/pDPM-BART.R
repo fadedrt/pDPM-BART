@@ -1,3 +1,32 @@
+#' MCMC Sampler for BART with Infinite Powered Dirichlet Process Mixture Errors
+#'
+#' This function implements a Bayesian Additive Regression Trees (BART) model
+#' with an infinite mixture of Gaussian errors under a powered Chinese Restaurant Process (pCRP).
+#' The model uses MCMC with Metropolis-Hastings updates for alpha and r,
+#' and Gibbs updates for mixture parameters.
+#'
+#' @param y Response vector
+#' @param x Covariate matrix
+#' @param sparse Logical flag for sparsity prior
+#' @param ntrees Number of trees in BART
+#' @param node_min_size Minimum node size
+#' @param alpha_tree Tree prior parameter
+#' @param beta_tree Tree prior parameter
+#' @param init_K Initial number of clusters
+#' @param fraction Prior scaling factor
+#' @param a Shape parameter for inverse-gamma prior
+#' @param nu Prior precision parameter
+#' @param a_alpha Shape parameter for alpha prior
+#' @param b_alpha Rate parameter for alpha prior
+#' @param nburn Number of burn-in iterations
+#' @param npost Number of posterior samples
+#' @param nthin Thinning interval
+#' @param r Initial power parameter for pCRP
+#' @param r_prior_sigma Standard deviation for half-normal prior on r
+#' @param mh_proposal_sd Proposal standard deviation for MH updates
+#'
+#' @export
+
 bart_mixnormal_infinite_power_rr <- function(
     y,
     x,
@@ -16,7 +45,7 @@ bart_mixnormal_infinite_power_rr <- function(
     npost            = 500,
     nthin            = 1,
     r                = 1.05, 
-    r_prior_sigma    = 0.1,  # <--- 替换成半正态先验的尺度参数
+    r_prior_sigma    = 0.1,
     mh_proposal_sd   = 0.1
 ) {
   
@@ -28,8 +57,8 @@ bart_mixnormal_infinite_power_rr <- function(
   n <- length(y)
   p <- ncol(x)
   
-  cat("开始BART-无限混合模型抽样（Data Augmentation 潜排列严谨版 + Local Swap）...\n")
-  cat("r初始值：", r, "，提议标准差：", mh_proposal_sd, "\n")
+  cat("Starting BART infinite mixture sampling (Data Augmentation + local swap)...\n")
+  cat("Initial r:", r, ", proposal sd:", mh_proposal_sd, "\n")
   
   tree_store      <- vector('list', npost)
   y_hat_store     <- matrix(NA, ncol = n, nrow = npost)
@@ -62,7 +91,7 @@ bart_mixnormal_infinite_power_rr <- function(
   K             <- init_K                                      
   r_current     <- r
   
-  # 初始化隐变量潜排列 current_pi
+  # Initialize latent permutation (not explicitly used in R layer)
   current_pi    <- sample(1:n)
   
   residual_init           <- rep(0, n)  
@@ -88,7 +117,7 @@ bart_mixnormal_infinite_power_rr <- function(
   for (i in seq_len(total_iterations)) {
     utils::setTxtProgressBar(pb, i)
     
-    # 5.1 BART Tree 更新
+    # 5.1 BART tree update
     for (j in seq_len(ntrees)) {
       current_partial_residuals <- y_scale - yhat_bart + tree_fits_cache[, j]
       move_type <- sample_move(curr_trees[[j]], i, nburn)
@@ -119,10 +148,10 @@ bart_mixnormal_infinite_power_rr <- function(
     }
     y_hat <- yhat_bart
     
-    # 5.2 Infinite Mixture Model 更新
+    # 5.2 Infinite mixture update
     current_residuals <- y_scale - y_hat  
     
-    # 【Z 更新】：调用你提供的 C++ 函数 (内部随机打乱，不需要传入 pi)
+    # Update cluster assignments via C++ implementation
     z_update_res <- update_z_inf_pCRP(
       x = current_residuals, K = K, z = z, alpha_current = alpha_current, 
       nu = nu, a = a, b = b_std, mu_0 = mu_0_std, r = r_current
@@ -142,10 +171,10 @@ bart_mixnormal_infinite_power_rr <- function(
     Mu     <- sigmamu_res$Mu
     Sigma2 <- sigmamu_res$Sigma2
     
-    # 【更新处】：改为直接基于经验比例计算 Pi
+    # Update mixture weights using empirical proportions
     Pi <- update_Pi_inf(z = z, K = K)
     
-    # 【核心逻辑闭环：纯伪似然框架】
+    # MH update for alpha
     alpha_current <- sample_alpha_mh(
       alpha_current  = alpha_current, 
       z              = z, 
@@ -155,20 +184,21 @@ bart_mixnormal_infinite_power_rr <- function(
       mh_proposal_sd = 0.5
     )
     
+    # MH update for r
     r_current <- sample_r_mh(
       r_current      = r_current, 
       z              = z, 
       alpha          = alpha_current, 
-      r_prior_sigma  = r_prior_sigma, # <--- 改为传入 sigma
+      r_prior_sigma  = r_prior_sigma,
       mh_proposal_sd = mh_proposal_sd
     )
     
-    # 5.3 Dirichlet Sparsity Update
+    # 5.3 Dirichlet sparsity update
     if (isTRUE(sparse) && i > floor(total_iterations * 0.1)) {
       s <- update_s(var_count, p, 1)
     }
     
-    # 5.4 Posterior Collection
+    # 5.4 Posterior storage
     if ((i > nburn) && ((i - nburn) %% nthin == 0)) {
       idx <- (i - nburn) / nthin
       
@@ -192,8 +222,9 @@ bart_mixnormal_infinite_power_rr <- function(
   r_post_mean <- mean(r_store, na.rm = TRUE)
   r_post_ci   <- quantile(r_store, c(0.025, 0.975), na.rm = TRUE)
   
-  cat("\nBART-无限混合模型抽样完成！\n")
-  cat("r后验均值：", round(r_post_mean, 3), "，95%置信区间：", round(r_post_ci, 3), "\n")
+  cat("\nSampling completed.\n")
+  cat("Posterior mean of r:", round(r_post_mean, 3), 
+      ", 95% CI:", round(r_post_ci, 3), "\n")
   
   results <- list(
     trees            = tree_store,
