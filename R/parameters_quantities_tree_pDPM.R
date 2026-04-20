@@ -172,6 +172,43 @@ update_Pi_inf <- function(z, K) {
   return(Pi_sample)
 }
 
+# =================================================================
+# 辅助函数：Escobar & West (1995) 经典的 alpha Gibbs 抽样
+# =================================================================
+update_alphagibbs <- function(K, a_alpha, b_alpha, alpha, tau, x) { 
+  n <- length(x)
+  if (n == 0) stop("x不能为空，样本量n不能为0！")
+  
+  if (length(tau) > 1) {
+    log_tau <- sum(log(tau))  
+  } else {
+    log_tau <- log(tau)       
+  }
+  
+  denominator <- n * (b_alpha - log_tau)
+  if (denominator <= 0) denominator <- 1e-8  
+  
+  numerator <- (a_alpha + K - 1)
+  prob1 <- numerator / (numerator + denominator)
+  
+  comp <- sample(c(1, 2), size = 1, prob = c(prob1, 1 - prob1))
+  
+  rate_param <- b_alpha - log_tau
+  if (rate_param <= 0) rate_param <- 1e-8  
+  
+  if (comp == 1) {
+    alpha_new <- rgamma(1, shape = a_alpha + K, rate = rate_param)
+  } else {
+    alpha_new <- rgamma(1, shape = a_alpha + K - 1, rate = rate_param)
+  }
+  alpha_new <- max(alpha_new, 1e-8)
+  
+  tau_new <- rbeta(n = 1, shape1 = alpha + 1, shape2 = n)
+  
+  return(list(alpha_new = alpha_new, tau_new = tau_new))
+}
+
+
 update_s_  <- function(var_count, p, alpha_s) {
   shape <- alpha_s / p + var_count
   temp  <- rgamma(length(shape), shape, rate = 1)
