@@ -171,3 +171,9 @@ update_Pi_inf <- function(z, K) {
   
   return(Pi_sample)
 }
+
+update_s_  <- function(var_count, p, alpha_s) {
+  shape <- alpha_s / p + var_count
+  temp  <- rgamma(length(shape), shape, rate = 1)
+  temp / sum(temp)
+}
