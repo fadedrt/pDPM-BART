@@ -2,7 +2,7 @@
 # =================================================================
 # Main Function: Standard DPM-BART Baseline Model (r = 1 fixed)
 # =================================================================
-bart_mixnormal_dp <- function(
+dpmbart <- function(
     y,
     x,
     sparse           = FALSE,
