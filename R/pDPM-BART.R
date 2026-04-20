@@ -27,7 +27,7 @@
 #'
 #' @export
 
-bart_mixnormal_infinite_power_rr <- function(
+pdpmbart <- function(
     y,
     x,
     sparse           = FALSE,
