@@ -6,6 +6,19 @@ The Bayesian tree structure and framework in this code are adapted from the prim
 
 Optimization Note: To enhance computational efficiency, we have specifically accelerated three primary bottleneck functions by re-implementing them with optimized C++ backends. The corresponding source code for these accelerated functions can be found in R/pdpmbart_backend.R.
 
+### Note on Cluster Weights \( \pi_k \)
+
+In the main manuscript, the model is formulated through the partition structure induced by the power Chinese Restaurant Process (pCRP), and explicit cluster weights \( \pi_k \) are not introduced.
+
+However, for computing predictive criteria such as **LPML** and **WAIC**, a mixture density representation is required. For this purpose, we construct cluster weights at each MCMC iteration using the empirical proportions:
+
+\[
+\pi_k = \frac{n_k}{\sum_{j=1}^K n_j}
+\]
+
+where \( n_k \) is the number of observations assigned to cluster \( k \).
+
+These weights are **not model parameters** and are **not used during posterior sampling**. They are computed only for evaluating predictive performance and are stored in `Pi_store` for convenience.
 ## Example
 
 ```r
@@ -13,22 +26,15 @@ Optimization Note: To enhance computational efficiency, we have specifically acc
 library(zeallot) # For multiple assignment (%<-%)
 library(Rcpp)    # Seamless R and C++ integration for computational acceleration
 
-# Function to simulate Friedman's dataset with mixture-of-normals errors
-sim_fried <- function(N, P) {
-  X <- matrix(runif(N * P), nrow = N)  # Random uniform predictors
+# Function to simulate Friedman's dataset with Gaussian errors
+sim_fried <- function(N, P, sigma) {
+  X <- matrix(runif(N * P), nrow = N)  
   mu <- 10 * sin(pi * X[, 1] * X[, 2]) + 
         20 * (X[, 3] - 0.5)^2 + 
         10 * X[, 4] + 
-        5 * X[, 5]  # True mean function
+        5 * X[, 5]
   
-  # Generate mixture-of-normals residuals
-  z <- sample(1:3, size = N, replace = TRUE, prob = c(0.5, 0.3, 0.2))
-  mu_k <- c(0, 2, -2)
-  sigma_k <- c(1, 0.5, 1.5)
-  
-  eps <- rnorm(N, mean = mu_k[z], sd = sigma_k[z])
-  
-  Y <- mu + eps
+  Y <- mu + rnorm(N, 0, sigma)  
   return(list(X = X, Y = Y, mu = mu))
 }
 
@@ -36,39 +42,41 @@ sim_fried <- function(N, P) {
 # Simulate training and test datasets
 # -------------------------
 set.seed(1)
-c(x, y, mu) %<-% sim_fried(250, 5)
+c(x, y, mu) %<-% sim_fried(250, 5, sigma = 1)
 
-c(test_x, test_y, test_mu) %<-% sim_fried(100, 5)
+c(test_x, test_y, test_mu) %<-% sim_fried(100, 5, sigma = 1)
 
-# Fit pDPM-BART model
-pdpmbart_fit <- pdpmbart(y, x, ntrees = 50, nburn = 2500, npost = 2500)
+# -------------------------
+# Fit pdpmBART model
+# -------------------------
+pdpmbart_fit <- bart_mixnormal_pdpmbart(
+  y, x,
+  ntrees = 50,
+  nburn  = 1000,
+  npost  = 2000
+)
 
+# -------------------------
 # Generate predictions
+# -------------------------
 c(f_hat_train, f_hat_test, f_hat_train_mean, f_hat_test_mean) %<-% 
-  prediction(x, y, test_x, npost = 2500, trees = pdpmbart_fit$trees)
-
-# Generate residual shift based on posterior mixture components
-residual_shift_samples <- sapply(1:length(pdpmbart_fit$Mu_store), function(s) {
-  mu_s <- pdpmbart_fit$Mu_store[[s]]
-  pi_s <- pdpmbart_fit$Pi_store[[s]]
-  sum(pi_s * mu_s)
-})
-
-r_shift <- mean(residual_shift_samples)
-
-# Adjust predictions
-final_predictions <- f_hat_test_mean + r_shift
+  prediction(x, y, test_x, npost = 2000, trees = pdpmbart_fit$trees)
 
 # -------------------------
 # Evaluation metrics
 # -------------------------
-cat("pDPM-BART RMSE:", round(sqrt(mean((final_predictions - test_y)^2)), 2), "\n")
-cat("pDPM-BART MAE:", round(mean(abs(final_predictions - test_y)), 2), "\n")
-cat("pDPM-BART MAPE:", round(mean(abs(final_predictions - test_y) / abs(test_y)) * 100, 2), "%\n")
-cat("pDPM-BART LPML:", calculate_lpml_pdpmbart(
-  y = y, 
-  f_hat_train = pdpmbart_fit$bart_store,
-  Mu_store = pdpmbart_fit$Mu_store, 
-  Sigma2_store = pdpmbart_fit$Sigma2_store, 
-  Pi_store = pdpmbart_fit$Pi_store
-), "\n")
+cat("pdpmBART RMSE:", round(sqrt(mean((f_hat_test_mean - test_y)^2)), 2), "\n")
+cat("pdpmBART MAE:", round(mean(abs(f_hat_test_mean - test_y)), 2), "\n")
+cat("pdpmBART MAPE:", round(mean(abs(f_hat_test_mean - test_y) / abs(test_y)) * 100, 2), "%\n")
+
+cat("pdpmBART LPML:",
+    calculate_lpml_pdpmbart(
+      y = y,
+      f_hat_train = pdpmbart_fit$bart_store,
+      Mu_store = pdpmbart_fit$Mu_store,
+      Sigma2_store = pdpmbart_fit$Sigma2_store,
+      Pi_store = pdpmbart_fit$Pi_store
+    ), "\n")
+
+dpm_waic_res <- calculate_waic_pdpmbart(pdpmbart_fit, y)
+cat("pdpmBART WAIC:", round(dpm_waic_res$WAIC, 2), "\n")
