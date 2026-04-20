@@ -453,29 +453,18 @@ sample_r_mh <- function(r_current, z, alpha, r_prior_sigma, mh_proposal_sd) {
   return(r_current)
 }
 
-update_Pi_inf <- function(z, alpha, K) {
-  # 1. 检查alpha是否为标量
-  if (length(alpha) != 1) {
-    stop("alpha必须是单一数值（标量）！")
-  }
-  # 检查alpha是否为正数（狄利克雷分布参数需为正）
-  if (alpha <= 0) {
-    stop("alpha必须是正数！")
-  }
-  
-  # 2. 统计每个族群的数量（确保标签在1~K范围内）
+update_Pi_inf <- function(z, K) {
+  # 1. 统计每个族群的数量（确保标签在1~K范围内）
   counts <- tabulate(z, nbins = K)
+  
   # 验证计数长度是否为K（避免z中标签超出1~K导致的错误）
   if (length(counts) != K) {
     stop("z中的标签必须是1到", K, "之间的整数！")
   }
   
-  # 3. 计算狄利克雷后验分布的参数（对称先验：alpha/K + 实际计数）
-  dirichlet_alpha <- alpha / K + counts
-  
-  # 4. 从后验分布抽样并转换为向量
-  Pi_sample <- gtools::rdirichlet(n = 1, alpha = dirichlet_alpha)
-  Pi_sample <- as.vector(Pi_sample)  # 确保输出为长度K的向量
+  # 2. 直接计算经验比例
+  # 因为此时的 K 已经过滤掉了空簇，所以 sum(counts) 等于总样本数 n
+  Pi_sample <- counts / sum(counts)
   
   return(Pi_sample)
 }
