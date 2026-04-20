@@ -41,7 +41,7 @@ c(x, y, mu) %<-% sim_fried(250, 5)
 c(test_x, test_y, test_mu) %<-% sim_fried(100, 5)
 
 # Fit pDPM-BART model
-pdpmbart_fit <- bart_mixnormal_infinite_power_rr(y, x, ntrees = 50, nburn = 2500, npost = 2500)
+pdpmbart_fit <- pdpmbart(y, x, ntrees = 50, nburn = 2500, npost = 2500)
 
 # Generate predictions
 c(f_hat_train, f_hat_test, f_hat_train_mean, f_hat_test_mean) %<-% 
