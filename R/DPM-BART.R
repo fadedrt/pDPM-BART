@@ -177,7 +177,9 @@ bart_mixnormal_dp <- function(
                                   mu_0 = mu_0_std, nu = nu, a = a, b = b_std, K = K)
     Mu     <- sigmamu_res$Mu
     Sigma2 <- sigmamu_res$Sigma2
-    Pi     <- update_Pi_inf(z = z, alpha = alpha_current, K = K)
+    
+    # 【更新处】：改为直接基于经验比例计算 Pi (去除了 alpha_current 参数)
+    Pi     <- update_Pi_inf(z = z, K = K)
     
     # 【修改 2】：使用经典的 Escobar & West (1995) 方法更新 alpha
     alphatau_res <- update_alphagibbs(
@@ -245,7 +247,6 @@ bart_mixnormal_dp <- function(
   class(results) <- "bart_mixnormal_dp"
   return(results)
 }
-
 
 
 
